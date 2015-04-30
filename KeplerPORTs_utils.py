@@ -378,6 +378,7 @@ class kepler_single_comp_data:
        rp_want - [Rearth] list of planet radii
        rstar - [Rsun] star radius
        logg - [cgs] star surface gravity
+       teff - [K] stellar effective temperature
        deteffver - [int] detection efficiency version used in call
                      to detection_efficiency()
        ecc - [0.0 - 1.0] orbital eccentricity
@@ -387,6 +388,8 @@ class kepler_single_comp_data:
        cdpps - [ppm] cdpp noise at each pulse duration
        mesthresh - [float] mes threshold reached at each pulseduration
                    typically 7.1 for Kepler
+       window_function_filename - [string]  not implemented yet
+       onesigdept_function_filename - [string] not implemented yet
     """
     def __init__(self):
         self.id = 0 
@@ -394,6 +397,7 @@ class kepler_single_comp_data:
         self.rp_want = np.array([0.0])
         self.rstar = 0.0
         self.logg = 0.0
+        self.teff = 0.0
         self.deteffver = 0
         self.ecc = 0.0
         self.dataspan = 0.0
@@ -401,6 +405,8 @@ class kepler_single_comp_data:
         self.pulsedurations = np.array([0.0])
         self.cdpps = np.array([0.0])
         self.mesthresh = np.array([0.0])
+        self.window_function_filename = ''
+        self.onesigdepth_function_filename = ''
 
 def kepler_single_comp(data):
     """Calculate a 2D grid of pipeline completeness
@@ -463,4 +469,4 @@ def kepler_single_comp(data):
     probdet = zz_2d * windowfunc_2d
     probtot = probdet * probtransit_2d
 
-    return probdet, probtot, snr_2d, zz_2d
+    return probdet, probtot
