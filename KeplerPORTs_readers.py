@@ -7,7 +7,7 @@ import KeplerPORTs_utils as kpu
 """
 
 
-def read_stellar_table(filename,output_prefix):
+def read_stellar_table(filename,output_prefix=''):
     """Reads in the full Kepler stellar table and saves the 
        information relevant to an occurrence rate calculation
        as a dictionary.  The Kepler stellar table search page is
@@ -20,11 +20,17 @@ def read_stellar_table(filename,output_prefix):
        http://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/
            nph-nstedAPI?table=q1_q16_stellar&format=ipac&select=*
 
+       The Q1-Q17 table is downloaded from this URL (206Mb)
+
+       http://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/
+           nph-nstedAPI?table=q1_q17_dr24_stellar&format=ipac&select=*
+
        Save the resulting file and use its filename as input to this
        function.
        INPUT:
            filename - Stellar table filename
-           output_prefix - output filename for pickle and matlab saves
+           output_prefix - output filename for shelve save
+                           default is not to save shelve file
        OUTPUT:
            stellar_dict - Dictionary using the KIC ids as the key.
                           The value is an instance of
@@ -69,7 +75,7 @@ def read_stellar_table(filename,output_prefix):
         cur.dataspan = BIG[i][43]
         cur.dutycycle = BIG[i][42]
         cur.pulsedurations = np.copy(pulsedurations)
-         for j in range(tmp1.size):
+        for j in range(tmp1.size):
           jj = j + 44
           kk = j + 58
           tmp1[j] = BIG[i][jj]
@@ -80,9 +86,11 @@ def read_stellar_table(filename,output_prefix):
         all_keys.append(cur.id)
     # Now zip it all together into dictionary with kic as key
     stellar_dict = dict(zip(all_keys, all_datas))
-    # Also write out the stellar dictionary with shelve
-    newshelf = shelve.open(output_prefix + '.shelf')
-    newshelf['stellar_dict'] = stellar_dict
-    newshelf.close
+
+    if output_prefix:
+        # write out the stellar dictionary with shelve
+        newshelf = shelve.open(output_prefix + '.shelf')
+        newshelf['stellar_dict'] = stellar_dict
+        newshelf.close
 
     return stellar_dict
