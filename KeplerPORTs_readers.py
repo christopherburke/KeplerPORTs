@@ -1,11 +1,13 @@
 import shelve
 import numpy as np
 import scipy.io as sio
+from astropy.io import fits
 import KeplerPORTs_utils as kpu
 
 """Module of functions to read kepler occurrence rate data products
+   Can read stellar table at NASA exoplanet archive
+   Can read in individual fits files of the planet detection metrics
 """
-
 
 def read_stellar_table(filename,output_prefix=''):
     """Reads in the full Kepler stellar table and saves the 
@@ -94,3 +96,73 @@ def read_stellar_table(filename,output_prefix=''):
         newshelf.close
 
     return stellar_dict
+
+class tps_planet_detection_metrics:
+    """Defines a class to store the window function and one sigma
+       depth function data relating to the tps planet detection
+       metrics
+       CONTENTS:
+       pulsedurations - [hr] list of transit durations searched
+       id - [int] Target identifier 
+       wf_data - list of dictionary containing window function data
+       osd_data - list of dictionary containing one sigma depth function
+    """
+    pulsedurations = [1.5, 2.0, 2.5, 3.0, 3.5, 4.5, 5.0, 6.0, 
+                       7.5, 9.0, 10.5, 12.0, 12.5, 15.0]
+    def __init__(self):
+        self.id = 0
+        self.wf_data = []
+        self.osd_data = []
+
+
+def read_planet_detection_metrics(filepath,wanted_kic,want_wf=True,
+                                  want_osd=True):
+    """Read in the window function and one sigma depth function
+       fits files.  They are returned in the tps_planet_detection_metric
+       class.
+       The fits files are available for the Q1-Q17 pipeline run here
+
+       http://exoplanetarchive.ipac.caltech.edu/bulk_data_download/
+
+       This function assumes the filenames have not been renamed
+       from their original names. 
+       INPUT:
+       filepath - [str] path to the directory containing fits files
+       wanted_kid - [int] KIC id of target you want data for
+       want_wf - [bool] retrieve window function data
+       want_osd - [bool] retrieve one sigma depth function
+    """
+    windowfunc_suffix = '_dr24_window.fits'
+    onesigdepthfunc_suffix = '_dr24_onesigdepth.fits'
+    # instantiate class to store data
+    return_data = tps_planet_detection_metrics()
+    return_data.id = wanted_kic
+
+    # Get the window function data
+    if want_wf:
+        windowfunc_filename = filepath + '/kplr' + \
+                              '{:09d}'.format(wanted_kic) + \
+                              windowfunc_suffix
+        hdulist_wf = fits.open(windowfunc_filename,mode='readonly')
+        for i in range(1,15):
+            wfd = {}
+            wfd["period"] = np.array(hdulist_wf[i].data["PERIOD"])
+            wfd["window"] = np.array(hdulist_wf[i].data["WINFUNC"])
+            return_data.wf_data.append(wfd)
+        hdulist_wf.close()
+
+    # Get the one sigma depth function
+    if want_osd:
+        onesigdepthfunc_filename = filepath + '/kplr' + \
+                                   '{:09d}'.format(wanted_kic) + \
+                                   onesigdepthfunc_suffix
+        hdulist_osd = fits.open(onesigdepthfunc_filename,mode='readonly')
+        for i in range(1,15):
+            osd = {}
+            osd["period"] = np.array(hdulist_osd[i].data["PERIOD"])
+            osd["onesigdep"] = np.array(hdulist_osd[i].data["ONESIGDEP"])
+            return_data.osd_data.append(osd)
+        hdulist_osd.close()
+
+    return return_data
+
