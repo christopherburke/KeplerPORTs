@@ -27,7 +27,7 @@ doit.cdpps = [36.2, 33.2, 31.0, 29.4, 28.0, 26.1, 25.4, 24.2,
               23.1, 22.4, 21.9, 21.8, 21.7, 21.5]
 doit.mesthresh = np.full_like(doit.pulsedurations,7.1)
 
-x1,x2,x3,x4 = kpu.kepler_single_comp(doit)
+x1,x2 = kpu.kepler_single_comp(doit)
 
 X, Y = np.meshgrid(doit.period_want, doit.rp_want)
 
