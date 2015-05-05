@@ -2,6 +2,7 @@ import numpy as np
 import scipy.interpolate as interp
 import scipy.special as spec
 import scipy.stats as stat
+import KeplerPORTs_readers as kpr
 
 """Module of miscellaneous utility functions for calculating
    planet occurrence rates with Kepler data
@@ -388,8 +389,9 @@ class kepler_single_comp_data:
        cdpps - [ppm] cdpp noise at each pulse duration
        mesthresh - [float] mes threshold reached at each pulseduration
                    typically 7.1 for Kepler
-       window_function_filename - [string]  not implemented yet
-       onesigdept_function_filename - [string] not implemented yet
+       planet_detection_metric_path - [string] directory path
+                                        of fits files for the
+                                        planet detection metrics
     """
     def __init__(self):
         self.id = 0 
@@ -405,8 +407,7 @@ class kepler_single_comp_data:
         self.pulsedurations = np.array([0.0])
         self.cdpps = np.array([0.0])
         self.mesthresh = np.array([0.0])
-        self.window_function_filename = ''
-        self.onesigdepth_function_filename = ''
+        self.planet_detection_metric_path = ''
 
 def kepler_single_comp(data):
     """Calculate a 2D grid of pipeline completeness
@@ -469,4 +470,93 @@ def kepler_single_comp(data):
     probdet = zz_2d * windowfunc_2d
     probtot = probdet * probtransit_2d
 
+    return probdet, probtot
+
+def kepler_single_comp_v1(data):
+    """Calculate a 2D grid of pipeline completeness
+       for a single Kepler target.  This version has higher fidelity
+       since it uses the planet detection metrics fits files
+       for the window function and 1-sigma depth function.
+       This is much slower than kepler_single_comp()
+       INPUT:
+         data - instance of class kepler_single_comp_data
+       OUTPUT:
+         probdet - 2D numpy array of period_want vs rp_want
+                   pipeline completeness for single target
+         probtot - same as probdet, but includes probability to transit
+    """
+    # Get the planet detection metrics struct
+    plan_det_met = kpr.read_planet_detection_metrics(
+                         data.planet_detection_metric_path, data.id,
+                         want_wf=True,want_osd=True)
+
+    # Calculate transit duration along period_want list
+    transit_duration_1d = transit_duration(data.rstar,
+                                           data.logg,
+                                           data.period_want,
+                                           data.ecc)
+    # To avoid extrapolation force the transit duration to be
+    #  within the allowed range
+    minduration = data.pulsedurations.argmin()
+    maxduration = data.pulsedurations.argmax()
+    transit_duration_1d = np.where(transit_duration_1d > maxduration,
+                                   maxduration, transit_duration_1d)
+    transit_duration_1d = np.where(transit_duration_1d < minduration,
+                                   minduration, transit_duration_1d)
+    # shape the one sigma depth function input data for interpolation
+    tmp_per = np.array([])
+    tmp_dur = np.array([])
+    tmp_osd = np.array([])
+    for i, dur in enumerate(plan_det_met.pulsedurations):
+       tmp = plan_det_met.osd_data[i]['period']
+       tmp_per = np.append(tmp_per,tmp)
+       tmp_dur = np.append(tmp_dur,np.full_like(tmp,dur))
+       tmp_osd = np.append(tmp_osd,plan_det_met.osd_data[i]['onesigdep'])
+
+    points = np.transpose(np.vstack((tmp_per,tmp_dur)))
+    newpoints = np.transpose(np.vstack((data.period_want,
+                                        transit_duration_1d)))
+    one_sigma_depth_1d = interp.griddata(points, tmp_osd, newpoints, 
+                                         method='linear')
+
+    # Calculate interpolated mesthresholds along transit_duration_1d
+    mesthresh_1d = interp_trandur(data.pulsedurations,
+                                  data.mesthresh,
+                                  transit_duration_1d)
+    # shape window function data for interpolation
+    tmp_per = np.array([])
+    tmp_dur = np.array([])
+    tmp_wf = np.array([])
+    for i, dur in enumerate(plan_det_met.pulsedurations):
+       tmp = plan_det_met.wf_data[i]['period']
+       tmp_per = np.append(tmp_per,tmp)
+       tmp_dur = np.append(tmp_dur,np.full_like(tmp,dur))
+       tmp_wf = np.append(tmp_wf,plan_det_met.wf_data[i]['window'])
+
+    points = np.transpose(np.vstack((tmp_per,tmp_dur)))
+    windowfunc_1d = interp.griddata(points, tmp_wf, newpoints, 
+                                         method='linear')
+    # get geometric probability to transit along period_want list
+    probtransit_1d = prob_to_transit(data.rstar,data.logg,
+                                     data.period_want,data.ecc)
+    # Calculate transit depth along rp_want list
+    depth_1d = rp_to_tpssquaredepth(data.rstar,data.rp_want)
+
+    # Now ready to make things 2d
+    nper = data.period_want.size
+    nrp = data.rp_want.size
+    depth_2d = np.tile(np.reshape(depth_1d,(nrp,1)),nper)
+    one_sigma_depth_2d = np.tile(np.reshape(one_sigma_depth_1d,
+                                 (1,nper)),(nrp,1))
+    mesthresh_2d = np.tile(np.reshape(mesthresh_1d,(1,nper)),(nrp,1))
+    windowfunc_2d = np.tile(np.reshape(windowfunc_1d,(1,nper)),(nrp,1))
+    probtransit_2d = np.tile(np.reshape(probtransit_1d,(1,nper)),(nrp,1))
+
+
+    # Do last calculations
+    snr_2d = depth_2d / one_sigma_depth_2d
+    zz_2d = detection_efficiency(snr_2d, mesthresh_2d, data.deteffver)
+
+    probdet = zz_2d * windowfunc_2d
+    probtot = probdet * probtransit_2d
     return probdet, probtot
