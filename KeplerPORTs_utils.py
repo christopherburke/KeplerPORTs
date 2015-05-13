@@ -98,12 +98,15 @@ def rp_to_depth(rstar, rp):
     depth = 84.0 * rp**2.0 / rstar**2
     return depth
 
-def rp_to_tpssquaredepth(rstar, rp):
+def rp_to_tpssquaredepth(rstar, rp, version=1):
     """Gives average transit depth for a given star and planet radius.
        This simulates the depth of the TPS boxcar signal.
        INPUT:
          rstar - Radius of star [Rsun]
          rp - Radius of planet ***[Rear]***
+         version - version = 1 for Q1Q16  
+                   version = 2 for Q1Q17***
+                       The version 2 result still needs analysis to confirm
        OUTPUT:
          depth - Depth of transit [ppm]
        COMMENTS:
@@ -133,7 +136,12 @@ def rp_to_tpssquaredepth(rstar, rp):
     alp = 1.0874
     bet = 1.0187
     depth = (alp-bet*k) * k**2 * 1.0e6
-    REALDEPTH2TPSSQUARE = 0.84
+    if version == 1:
+        REALDEPTH2TPSSQUARE = 0.84
+    elif version == 2:
+        REALDEPTH2TPSSQUARE = 1.0
+    else:
+        REALDEPTH2TPSSQUARE = 0.84
     depth = depth * REALDEPTH2TPSSQUARE
     return depth
 
@@ -232,6 +240,17 @@ def interp_trandur(pulses, cdpps, durs):
     x = np.where(durs > pulses[-1], cdpps[-1], x)
     # replace results with smaller durs than pulses with first cddps
     x = np.where(durs < pulses[0], cdpps[0], x)
+    # Check for non finite results
+    # very very rarely pchip gets NaN results
+    # In this case use interp1d with linear interpolation
+    # should be more stable
+    if np.logical_not(np.all(np.isfinite(x))):
+        interpobject = interp.interp1d(pulses, cdpps, kind='linear',
+                                       bounds_error=False,
+                                       fill_value=0.0)
+        x = interpobject(durs)
+        x = np.where(durs > pulses[-1], cdpps[-1], x)
+        x = np.where(durs < pulses[0], cdpps[0], x)
     return x
 
 def prob_to_transit(rstar, logg, per, ecc):
@@ -392,6 +411,8 @@ class kepler_single_comp_data:
        planet_detection_metric_path - [string] directory path
                                         of fits files for the
                                         planet detection metrics
+       version - [1 or 2] version 1 is for Q1-Q16 settings
+                 version 2 is for Q1-Q17 settings default is 1 
     """
     def __init__(self):
         self.id = 0 
@@ -408,6 +429,7 @@ class kepler_single_comp_data:
         self.cdpps = np.array([0.0])
         self.mesthresh = np.array([0.0])
         self.planet_detection_metric_path = ''
+        self.version = 1
 
 def kepler_single_comp(data):
     """Calculate a 2D grid of pipeline completeness
@@ -450,7 +472,7 @@ def kepler_single_comp(data):
     # force at least 3 transits available following detection requirement
     ntraneff_1d = np.where(ntraneff_1d < 3.0, 3.0, ntraneff_1d)
     # Calculate transit depth along rp_want list
-    depth_1d = rp_to_tpssquaredepth(data.rstar,data.rp_want)
+    depth_1d = rp_to_tpssquaredepth(data.rstar,data.rp_want,data.version)
 
     # Now ready to make things 2d
     nper = data.period_want.size
@@ -486,10 +508,11 @@ def kepler_single_comp_v1(data):
          probtot - same as probdet, but includes probability to transit
     """
     # Get the planet detection metrics struct
+    print "Read planet detection metrics"
     plan_det_met = kpr.read_planet_detection_metrics(
                          data.planet_detection_metric_path, data.id,
                          want_wf=True,want_osd=True)
-
+    print "Done Reading planet detection metrics"
     # Calculate transit duration along period_want list
     transit_duration_1d = transit_duration(data.rstar,
                                            data.logg,
@@ -497,50 +520,95 @@ def kepler_single_comp_v1(data):
                                            data.ecc)
     # To avoid extrapolation force the transit duration to be
     #  within the allowed range
-    minduration = data.pulsedurations.argmin()
-    maxduration = data.pulsedurations.argmax()
+    minduration = data.pulsedurations.min()
+    maxduration = data.pulsedurations.max() - 0.01 
     transit_duration_1d = np.where(transit_duration_1d > maxduration,
                                    maxduration, transit_duration_1d)
     transit_duration_1d = np.where(transit_duration_1d < minduration,
                                    minduration, transit_duration_1d)
-    # shape the one sigma depth function input data for interpolation
-    tmp_per = np.array([])
-    tmp_dur = np.array([])
-    tmp_osd = np.array([])
-    for i, dur in enumerate(plan_det_met.pulsedurations):
-       tmp = plan_det_met.osd_data[i]['period']
-       tmp_per = np.append(tmp_per,tmp)
-       tmp_dur = np.append(tmp_dur,np.full_like(tmp,dur))
-       tmp_osd = np.append(tmp_osd,plan_det_met.osd_data[i]['onesigdep'])
+    # Now go through transit_duration_1d and create an index array
+    # into data.pulsedurations such that the index points to nearest
+    #  pulse without going over
+    pulse_index_1d = np.digitize(transit_duration_1d,data.pulsedurations)
+    pulse_index_1d = np.where(pulse_index_1d > 0, pulse_index_1d - 1, pulse_index_1d)
+    # Initialize one sigma depth and window function
+    one_sigma_depth_1d = np.zeros_like(data.period_want)
+    windowfunc_1d = np.zeros_like(data.period_want)
+    # iterate over the pulse durations that are present
+    for i in range(pulse_index_1d.min(),pulse_index_1d.max()+1):
+        idxin = np.arange(data.period_want.size)\
+                         [np.nonzero(pulse_index_1d == i)]
+        current_period = data.period_want[idxin]
+        current_trandur = transit_duration_1d[idxin]
+        low_trandur = np.full_like(current_trandur,data.pulsedurations[i])
+        hgh_trandur = np.full_like(current_trandur,data.pulsedurations[i+1])
+        # Start doing one sigma depth function
+        low_osd_x = plan_det_met.osd_data[i]['period']
+        low_osd_y = plan_det_met.osd_data[i]['onesigdep']
+        low_osd_func = interp.interp1d(low_osd_x, low_osd_y,
+                                  kind='nearest', copy=False,
+                                  assume_sorted=True)
+        tmp_period = np.copy(current_period)
+        lowper = low_osd_x[0]
+        hghper = low_osd_x[-1]
+        tmp_period = np.where(tmp_period < lowper, lowper, tmp_period)
+        tmp_period = np.where(tmp_period > hghper, hghper, tmp_period)
+        current_low_osd = low_osd_func(tmp_period)
+        hgh_osd_x = plan_det_met.osd_data[i+1]['period']
+        hgh_osd_y = plan_det_met.osd_data[i+1]['onesigdep']
+        hgh_osd_func = interp.interp1d(hgh_osd_x, hgh_osd_y,
+                                  kind='nearest', copy=False,
+                                  assume_sorted=True)
+        tmp_period = np.copy(current_period)
+        lowper = hgh_osd_x[0]
+        hghper = hgh_osd_x[-1]
+        tmp_period = np.where(tmp_period < lowper, lowper, tmp_period)
+        tmp_period = np.where(tmp_period > hghper, hghper, tmp_period)
+        current_hgh_osd = hgh_osd_func(tmp_period)
+        # linear interpolate across pulse durations
+        keep_vector = (current_trandur - low_trandur) /\
+                      (hgh_trandur - low_trandur)
+        current_osd = (current_hgh_osd-current_low_osd) * \
+                      keep_vector + current_low_osd
+        one_sigma_depth_1d[idxin] = current_osd
 
-    points = np.transpose(np.vstack((tmp_per,tmp_dur)))
-    newpoints = np.transpose(np.vstack((data.period_want,
-                                        transit_duration_1d)))
-    one_sigma_depth_1d = interp.griddata(points, tmp_osd, newpoints, 
-                                         method='linear')
+        # Start doing window function
+        low_wf_x = plan_det_met.wf_data[i]['period']
+        low_wf_y = plan_det_met.wf_data[i]['window']
+        low_wf_func = interp.interp1d(low_wf_x, low_wf_y,
+                                  kind='nearest', copy=False,
+                                  assume_sorted=True)
+        tmp_period = np.copy(current_period)
+        lowper = low_wf_x[0]
+        hghper = low_wf_x[-1]
+        tmp_period = np.where(tmp_period < lowper, lowper, tmp_period)
+        tmp_period = np.where(tmp_period > hghper, hghper, tmp_period)
+        current_low_wf = low_wf_func(tmp_period)
+        hgh_wf_x = plan_det_met.wf_data[i+1]['period']
+        hgh_wf_y = plan_det_met.wf_data[i+1]['window']
+        hgh_wf_func = interp.interp1d(hgh_wf_x, hgh_wf_y,
+                                  kind='nearest', copy=False,
+                                  assume_sorted=True)
+        tmp_period = np.copy(current_period)
+        lowper = hgh_wf_x[0]
+        hghper = hgh_wf_x[-1]
+        tmp_period = np.where(tmp_period < lowper, lowper, tmp_period)
+        tmp_period = np.where(tmp_period > hghper, hghper, tmp_period)
+        current_hgh_wf = hgh_wf_func(tmp_period)
+        # linear interpolate across pulse durations
+        current_wf = (current_hgh_wf-current_low_wf) * \
+                      keep_vector + current_low_wf
+        windowfunc_1d[idxin] = current_wf
 
     # Calculate interpolated mesthresholds along transit_duration_1d
     mesthresh_1d = interp_trandur(data.pulsedurations,
                                   data.mesthresh,
                                   transit_duration_1d)
-    # shape window function data for interpolation
-    tmp_per = np.array([])
-    tmp_dur = np.array([])
-    tmp_wf = np.array([])
-    for i, dur in enumerate(plan_det_met.pulsedurations):
-       tmp = plan_det_met.wf_data[i]['period']
-       tmp_per = np.append(tmp_per,tmp)
-       tmp_dur = np.append(tmp_dur,np.full_like(tmp,dur))
-       tmp_wf = np.append(tmp_wf,plan_det_met.wf_data[i]['window'])
-
-    points = np.transpose(np.vstack((tmp_per,tmp_dur)))
-    windowfunc_1d = interp.griddata(points, tmp_wf, newpoints, 
-                                         method='linear')
     # get geometric probability to transit along period_want list
     probtransit_1d = prob_to_transit(data.rstar,data.logg,
                                      data.period_want,data.ecc)
     # Calculate transit depth along rp_want list
-    depth_1d = rp_to_tpssquaredepth(data.rstar,data.rp_want)
+    depth_1d = rp_to_tpssquaredepth(data.rstar,data.rp_want,data.version)
 
     # Now ready to make things 2d
     nper = data.period_want.size
