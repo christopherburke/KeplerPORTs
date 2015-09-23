@@ -397,6 +397,8 @@ class kepler_single_comp_data:
        period_want - [day] list of orbital periods
        rp_want - [Rearth] list of planet radii
        rstar - [Rsun] star radius
+       rstar_p1sig - [Rsun] +1-sigma error interval on star radius
+       rstar_n1sig - [Rsun] -1-sigma error interval on star radius
        logg - [cgs] star surface gravity
        teff - [K] stellar effective temperature
        deteffver - [int] detection efficiency version used in call
@@ -413,12 +415,18 @@ class kepler_single_comp_data:
                                         planet detection metrics
        version - [1 or 2] version 1 is for Q1-Q16 settings
                  version 2 is for Q1-Q17 settings default is 1 
+       detefffunc - [function] Flexability to call a different
+                    detection efficiency function of your
+                    own design.  Defaults to detection_efficiency()
+                    of this module
     """
     def __init__(self):
         self.id = 0 
         self.period_want = np.array([0.0])
         self.rp_want = np.array([0.0])
         self.rstar = 0.0
+        self.rstar_p1sig = 0.0
+        self.rstar_n1sig = 0.0
         self.logg = 0.0
         self.teff = 0.0
         self.deteffver = 0
@@ -430,6 +438,7 @@ class kepler_single_comp_data:
         self.mesthresh = np.array([0.0])
         self.planet_detection_metric_path = ''
         self.version = 1
+        self.detefffunc = detection_efficiency
 
 def kepler_single_comp(data):
     """Calculate a 2D grid of pipeline completeness
@@ -487,7 +496,7 @@ def kepler_single_comp(data):
 
     # Do last calculations
     snr_2d = depth_2d / cdpp_2d * np.sqrt(ntraneff_2d)
-    zz_2d = detection_efficiency(snr_2d, mesthresh_2d, data.deteffver)
+    zz_2d = data.detefffunc(snr_2d, mesthresh_2d, data.deteffver)
 
     probdet = zz_2d * windowfunc_2d
     probtot = probdet * probtransit_2d
@@ -623,7 +632,7 @@ def kepler_single_comp_v1(data):
 
     # Do last calculations
     snr_2d = depth_2d / one_sigma_depth_2d
-    zz_2d = detection_efficiency(snr_2d, mesthresh_2d, data.deteffver)
+    zz_2d = data.detefffunc(snr_2d, mesthresh_2d, data.deteffver)
 
     probdet = zz_2d * windowfunc_2d
     probtot = probdet * probtransit_2d
