@@ -1,4 +1,5 @@
-# KeplerPORTs
+# Q1-Q16 KeplerPORTs
+# ***NOT FOR DR25 SEE https://github.com/nasa/KeplerPORTs For official DR25 KeplerPORTs***
 Kepler Planet Occurrence Rate Tools
 
 A series of python tools to illustrate use of the Kepler planet occurrence data products and supplement the article 'Terrestrial Planet Occurrence Rates for the Kepler GK Dwarf Sample', Burke et al., 2015, ApJ, submitted.
